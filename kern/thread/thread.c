@@ -57,6 +57,8 @@
 
 /* Magic number used as a guard value on kernel thread stacks. */
 #define THREAD_STACK_MAGIC 0xbaadf00d
+static struct queue *mlfq_queues[3];
+
 
 /* Wait channel. A wchan is protected by an associated, passed-in spinlock. */
 struct wchan {
@@ -396,6 +398,10 @@ thread_bootstrap(void)
 	KASSERT(curthread->t_proc != NULL);
 	KASSERT(curthread->t_proc == kproc);
 
+	for (int i = 0; i < 3; i++) {
+		mlfq_queues[i] = q_create(THREAD_MAX);
+  }
+
 	/* Done */
 }
 
@@ -453,36 +459,34 @@ thread_start_cpus(void)
  * targetcpu might be curcpu; it might not be, too.
  */
 static
-void
-thread_make_runnable(struct thread *target, bool already_have_lock)
-{
+void thread_make_runnable(struct thread *target, bool already_have_lock) {
 	struct cpu *targetcpu;
 
 	/* Lock the run queue of the target thread's cpu. */
 	targetcpu = target->t_cpu;
 
 	if (already_have_lock) {
-		/* The target thread's cpu should be already locked. */
-		KASSERT(spinlock_do_i_hold(&targetcpu->c_runqueue_lock));
+		 /* The target thread's cpu should be already locked. */
+		 KASSERT(spinlock_do_i_hold(&targetcpu->c_runqueue_lock));
 	}
 	else {
-		spinlock_acquire(&targetcpu->c_runqueue_lock);
+		 spinlock_acquire(&targetcpu->c_runqueue_lock);
 	}
 
-	/* Target thread is now ready to run; put it on the run queue. */
+	/* Target thread is now ready to run; put it in the MLFQ */
 	target->t_state = S_READY;
-	threadlist_addtail(&targetcpu->c_runqueue, target);
+	q_addtail(mlfq_queues[target->priority_level], target); // Add to the appropriate MLFQ queue
 
 	if (targetcpu->c_isidle && targetcpu != curcpu->c_self) {
-		/*
-		 * Other processor is idle; send interrupt to make
-		 * sure it unidles.
-		 */
-		ipi_send(targetcpu, IPI_UNIDLE);
+		 /*
+		  * Other processor is idle; send interrupt to make
+		  * sure it unidles.
+		  */
+		 ipi_send(targetcpu, IPI_UNIDLE);
 	}
 
 	if (!already_have_lock) {
-		spinlock_release(&targetcpu->c_runqueue_lock);
+		 spinlock_release(&targetcpu->c_runqueue_lock);
 	}
 }
 
@@ -516,6 +520,9 @@ thread_fork(const char *name,
 		thread_destroy(newthread);
 		return ENOMEM;
 	}
+	newthread->priority_level = 0;
+   newthread->ticks_used = 0;
+
 	thread_checkstack_init(newthread);
 
 	/*
@@ -843,17 +850,14 @@ thread_timeryield(void)
 void
 schedule(void)
 {
-	struct thread *next;
-
-	/* Get the next thread in FIFO order (i.e., remove from front of run queue) */
-	next = threadlist_remhead(&runqueue);
-
-	/* If nothing is ready to run, switch to the idle thread */
-	if (next == NULL) {
-		next = thread_get_idle();
-	}
-
-	thread_switch(next)
+	for (int i = 0; i < 3; i++) {
+		if (!q_empty(mlfq_queues[i])) {
+			 struct thread *next = q_remhead(mlfq_queues[i]);
+			 thread_switch(next);
+			 return;
+		}
+  }
+  thread_switch(NULL); // If no thread
 }
 
 /*

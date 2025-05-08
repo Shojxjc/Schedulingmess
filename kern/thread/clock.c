@@ -96,14 +96,28 @@ hardclock(void)
 	 * Collect statistics here as desired.
 	 */
 
-	curcpu->c_hardclocks++;
-	if ((curcpu->c_hardclocks % MIGRATE_HARDCLOCKS) == 0) {
-		thread_consider_migration();
-	}
-	if ((curcpu->c_hardclocks % SCHEDULE_HARDCLOCKS) == 0) {
-		schedule();
-	}
-	// thread_timeryield();
+	 curcpu->c_hardclocks++;
+    if ((curcpu->c_hardclocks % MIGRATE_HARDCLOCKS) == 0) {
+        thread_consider_migration();
+    }
+    if ((curcpu->c_hardclocks % SCHEDULE_HARDCLOCKS) == 0) {
+        schedule();
+    }
+
+    struct thread *cur = curthread;
+
+    cur->ticks_used++;
+
+    if (cur->priority_level == 0 && cur->ticks_used >= 1) {
+        cur->priority_level = 1;
+        cur->ticks_used = 0;
+        thread_yield();
+    }
+    else if (cur->priority_level == 1 && cur->ticks_used >= 2) {
+        cur->priority_level = 2;
+        cur->ticks_used = 0;
+        thread_yield();
+    }
 }
 
 /*

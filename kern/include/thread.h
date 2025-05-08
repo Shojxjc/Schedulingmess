@@ -66,6 +66,8 @@ typedef enum {
 
 /* Thread structure. */
 struct thread {
+	int priority_level;   // 0 = high, 1 = medium, 2 = low
+	int ticks_used;       // CPU ticks used at current level
 	/*
 	 * These go up front so they're easy to get to even if the
 	 * debugger is messed up.
